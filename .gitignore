@@ -12,10 +12,7 @@ node_modules/
 # API secrets
 .env
 
-# SQLite DB (large, private, already generated)
-knowledge_base.db
-
-# Scraped data (optional)
+# Scraped data (optional — raw markdown not needed in production)
 markdown_files/
 
 # OS files

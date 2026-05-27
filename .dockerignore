@@ -1,0 +1,9 @@
+.venv
+venv
+__pycache__
+*.pyc
+.git
+.env
+.DS_Store
+node_modules
+markdown_files
