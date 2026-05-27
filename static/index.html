@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Python Docs Assistant</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" media="(prefers-color-scheme: light)">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" media="(prefers-color-scheme: dark)">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <style>
+    :root {
+      --bg: #fafafa;
+      --fg: #1a1a1a;
+      --muted: #6b7280;
+      --border: #e5e7eb;
+      --accent: #4f46e5;
+      --accent-hover: #4338ca;
+      --accent-soft: rgba(79, 70, 229, 0.1);
+      --card: #ffffff;
+      --code-bg: #f6f8fa;
+      --error: #dc2626;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0a0a0a;
+        --fg: #f5f5f5;
+        --muted: #9ca3af;
+        --border: #262626;
+        --card: #171717;
+        --code-bg: #0d1117;
+        --error: #f87171;
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      margin: 0;
+      padding: 0;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+    .container {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 56px 24px 80px;
+    }
+    header { text-align: center; margin-bottom: 32px; }
+    h1 { font-size: 28px; margin: 0 0 8px; font-weight: 700; letter-spacing: -0.02em; }
+    .subtitle { color: var(--muted); font-size: 15px; margin: 0; }
+    .input-row { display: flex; gap: 8px; margin-bottom: 16px; }
+    textarea {
+      flex: 1;
+      padding: 12px 14px;
+      font-size: 15px;
+      font-family: inherit;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--card);
+      color: var(--fg);
+      resize: vertical;
+      min-height: 48px;
+      max-height: 240px;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+    }
+    button {
+      padding: 0 22px;
+      font-size: 15px;
+      font-weight: 600;
+      background: var(--accent);
+      color: white;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background 0.15s, opacity 0.15s;
+      white-space: nowrap;
+    }
+    button:hover:not(:disabled) { background: var(--accent-hover); }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .examples { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 28px; }
+    .example {
+      background: var(--card);
+      border: 1px solid var(--border);
+      padding: 6px 12px;
+      border-radius: 16px;
+      font-size: 13px;
+      color: var(--muted);
+      cursor: pointer;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .example:hover { color: var(--fg); border-color: var(--accent); }
+    #answer {
+      background: var(--card);
+      border: 1px solid var(--border);
+      padding: 20px 24px;
+      border-radius: 12px;
+      margin-bottom: 16px;
+      display: none;
+    }
+    #answer.visible { display: block; }
+    #answer pre {
+      background: var(--code-bg);
+      border-radius: 8px;
+      padding: 14px;
+      overflow-x: auto;
+      margin: 12px 0;
+      font-size: 13.5px;
+    }
+    #answer code {
+      background: var(--code-bg);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.9em;
+      font-family: ui-monospace, "SF Mono", Monaco, Menlo, Consolas, monospace;
+    }
+    #answer pre code { background: none; padding: 0; font-size: inherit; }
+    #answer p:first-child { margin-top: 0; }
+    #answer p:last-child { margin-bottom: 0; }
+    #answer h1, #answer h2, #answer h3 { line-height: 1.3; }
+    #answer a { color: var(--accent); }
+    .sources { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--border); }
+    .sources-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 10px;
+    }
+    .source-link {
+      display: block;
+      padding: 10px 12px;
+      background: var(--bg);
+      border-radius: 8px;
+      margin-bottom: 6px;
+      text-decoration: none;
+      color: var(--fg);
+      border: 1px solid var(--border);
+      transition: border-color 0.15s;
+    }
+    .source-link:hover { border-color: var(--accent); }
+    .source-text { font-size: 14px; }
+    .source-url { font-size: 12px; color: var(--accent); margin-top: 2px; word-break: break-all; }
+    .loading { display: inline-flex; align-items: center; gap: 10px; color: var(--muted); }
+    .spinner {
+      width: 14px; height: 14px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .error { color: var(--error); }
+    .hint {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 4px;
+      text-align: right;
+    }
+    footer {
+      text-align: center;
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 56px;
+    }
+    @media (max-width: 600px) {
+      .container { padding: 32px 16px 60px; }
+      h1 { font-size: 24px; }
+      .input-row { flex-direction: column; }
+      button { padding: 12px 22px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Python Docs Assistant</h1>
+      <p class="subtitle">Ask anything about FastAPI, Pydantic, pandas, scikit-learn, LangChain &amp; more — answers cite the source docs.</p>
+    </header>
+
+    <div class="input-row">
+      <textarea id="question" placeholder="e.g. How do I make a POST endpoint in FastAPI?" rows="1"></textarea>
+      <button id="submit">Ask</button>
+    </div>
+    <div class="hint">Press <strong>Enter</strong> to submit, <strong>Shift+Enter</strong> for newline</div>
+
+    <div class="examples">
+      <div class="example">How do I create a dependency in FastAPI?</div>
+      <div class="example">What's the difference between BaseModel and dataclass?</div>
+      <div class="example">groupby with multiple aggregations in pandas</div>
+      <div class="example">LangChain retriever with custom vector store</div>
+    </div>
+
+    <div id="answer"></div>
+
+    <footer>
+      Grounded in <strong>1,100+</strong> docs &middot; FastAPI &middot; Pydantic &middot; uvicorn &middot; uv &middot; LangChain &middot; LlamaIndex &middot; pandas &middot; scikit-learn
+    </footer>
+  </div>
+
+  <script>
+    marked.setOptions({
+      highlight: (code, lang) => {
+        try {
+          if (lang && hljs.getLanguage(lang)) return hljs.highlight(code, { language: lang }).value;
+          return hljs.highlightAuto(code).value;
+        } catch { return code; }
+      },
+      breaks: true,
+      gfm: true,
+    });
+
+    const $q = document.getElementById("question");
+    const $a = document.getElementById("answer");
+    const $btn = document.getElementById("submit");
+
+    document.querySelectorAll(".example").forEach(el => {
+      el.addEventListener("click", () => {
+        $q.value = el.textContent;
+        $q.focus();
+      });
+    });
+
+    $q.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        askQuestion();
+      }
+    });
+
+    $btn.addEventListener("click", askQuestion);
+
+    async function askQuestion() {
+      const question = $q.value.trim();
+      if (!question) return;
+
+      $btn.disabled = true;
+      $a.className = "visible";
+      $a.innerHTML = '<div class="loading"><div class="spinner"></div>Searching docs…</div>';
+
+      try {
+        const response = await fetch("/query", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ question })
+        });
+
+        if (!response.ok) {
+          const err = await response.json().catch(() => ({}));
+          throw new Error(err.error || err.detail || `HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        renderAnswer(data);
+      } catch (error) {
+        $a.innerHTML = `<div class="error">Error: ${escapeHtml(error.message)}</div>`;
+        console.error(error);
+      } finally {
+        $btn.disabled = false;
+      }
+    }
+
+    function renderAnswer(data) {
+      let html = `<div class="answer-body">${marked.parse(data.answer || "")}</div>`;
+      if (data.links && data.links.length) {
+        html += '<div class="sources"><div class="sources-title">Sources</div>';
+        for (const link of data.links) {
+          if (!link.url) continue;
+          html += `<a class="source-link" href="${escapeHtml(link.url)}" target="_blank" rel="noopener noreferrer">
+            <div class="source-text">${escapeHtml(link.text || "Source")}</div>
+            <div class="source-url">${escapeHtml(link.url)}</div>
+          </a>`;
+        }
+        html += '</div>';
+      }
+      $a.innerHTML = html;
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      })[c]);
+    }
+  </script>
+</body>
+</html>
