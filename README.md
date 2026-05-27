@@ -16,3 +16,9 @@ A Retrieval-Augmented Generation (RAG) system that answers Python questions by g
 ```bash
 python -m uvicorn app:app --reload --port 10000
 ```
+
+## Deployed Link
+
+```bash
+(https://huggingface.co/spaces/rujutabhanose/python-docs-assistant)
+```
