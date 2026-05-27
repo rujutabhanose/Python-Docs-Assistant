@@ -104,6 +104,62 @@
       margin-bottom: 28px;
       font-family: 'JetBrains Mono', monospace;
     }
+
+    button.attach {
+      flex-shrink: 0;
+      width: 52px;
+      height: 52px;
+      display: grid;
+      place-items: center;
+      background: var(--card);
+      color: var(--fg-dim);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      cursor: pointer;
+      transition: border-color 0.15s, color 0.15s, background 0.15s;
+    }
+    button.attach:hover { color: var(--fg); border-color: var(--muted); background: var(--card-2); }
+    button.attach svg { width: 20px; height: 20px; }
+    button.attach.has-image { color: var(--accent); border-color: var(--accent); }
+
+    .image-preview {
+      display: none;
+      align-items: center;
+      gap: 10px;
+      max-width: 640px;
+      margin: 0 auto 12px;
+      padding: 8px 10px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+    .image-preview.visible { display: flex; }
+    .image-preview img {
+      width: 40px;
+      height: 40px;
+      border-radius: 6px;
+      object-fit: cover;
+    }
+    .image-preview .filename {
+      flex: 1;
+      font-size: 13px;
+      color: var(--fg-dim);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      text-align: left;
+    }
+    .image-preview .remove {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-size: 18px;
+      line-height: 1;
+    }
+    .image-preview .remove:hover { color: var(--error); background: var(--card-2); }
     .hint kbd {
       background: var(--card-2);
       border: 1px solid var(--border);
@@ -272,9 +328,22 @@
 
     <div class="input-row">
       <textarea id="question" placeholder="e.g. How do I make a POST endpoint in FastAPI?" rows="1"></textarea>
+      <button class="attach" id="attach" title="Attach image">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+        </svg>
+      </button>
+      <input type="file" id="file" accept="image/*" hidden>
       <button class="send" id="submit">Ask</button>
     </div>
-    <div class="hint"><kbd>Enter</kbd> to submit · <kbd>Shift + Enter</kbd> for newline</div>
+
+    <div class="image-preview" id="preview">
+      <img id="preview-img" alt="">
+      <span class="filename" id="preview-name"></span>
+      <button class="remove" id="preview-remove" title="Remove image">×</button>
+    </div>
+
+    <div class="hint"><kbd>Enter</kbd> to submit · <kbd>Shift + Enter</kbd> for newline · paperclip to attach an image</div>
 
     <div class="examples">
       <button class="example">How do I create a dependency in FastAPI?</button>
@@ -305,6 +374,14 @@
     const $q = document.getElementById("question");
     const $a = document.getElementById("answer");
     const $btn = document.getElementById("submit");
+    const $attach = document.getElementById("attach");
+    const $file = document.getElementById("file");
+    const $preview = document.getElementById("preview");
+    const $previewImg = document.getElementById("preview-img");
+    const $previewName = document.getElementById("preview-name");
+    const $previewRemove = document.getElementById("preview-remove");
+
+    let attachedImageBase64 = null;
 
     document.querySelectorAll(".example").forEach(el => {
       el.addEventListener("click", () => {
@@ -312,6 +389,33 @@
         $q.focus();
       });
     });
+
+    $attach.addEventListener("click", () => $file.click());
+
+    $file.addEventListener("change", () => {
+      const f = $file.files[0];
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const dataUrl = e.target.result;
+        // API expects raw base64, not data URL
+        attachedImageBase64 = dataUrl.split(",")[1] || "";
+        $previewImg.src = dataUrl;
+        $previewName.textContent = f.name;
+        $preview.classList.add("visible");
+        $attach.classList.add("has-image");
+      };
+      reader.readAsDataURL(f);
+    });
+
+    $previewRemove.addEventListener("click", clearImage);
+
+    function clearImage() {
+      attachedImageBase64 = null;
+      $file.value = "";
+      $preview.classList.remove("visible");
+      $attach.classList.remove("has-image");
+    }
 
     $q.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) {
@@ -330,11 +434,14 @@
       $a.className = "visible";
       $a.innerHTML = '<div class="loading"><div class="dots"><span></span><span></span><span></span></div>Searching the docs…</div>';
 
+      const body = { question };
+      if (attachedImageBase64) body.image = attachedImageBase64;
+
       try {
         const response = await fetch("/query", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question })
+          body: JSON.stringify(body)
         });
 
         if (!response.ok) {
@@ -344,6 +451,7 @@
 
         const data = await response.json();
         renderAnswer(data);
+        clearImage();
       } catch (error) {
         $a.innerHTML = `<div class="error">Error: ${escapeHtml(error.message)}</div>`;
         console.error(error);

@@ -15,6 +15,7 @@ import base64
 from fastapi.responses import JSONResponse
 import uvicorn
 import traceback
+from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi.staticfiles import StaticFiles
 
@@ -30,6 +31,70 @@ load_dotenv()
 MAX_CONTEXT_CHUNKS = 4  # Increased number of chunks per source
 API_KEY = os.getenv("API_KEY")  # Get API key from environment variable
 
+# In-memory embeddings cache populated at startup: matrix shape (N, D), L2-normalized
+# so cosine similarity reduces to a single matrix-vector dot product.
+EMBEDDING_MATRIX: Optional[np.ndarray] = None
+CHUNK_META: List[Dict[str, Any]] = []
+
+
+def load_embeddings_cache():
+    """Load every embedded row into a normalized NumPy matrix + parallel metadata list."""
+    global EMBEDDING_MATRIX, CHUNK_META
+
+    if not os.path.exists(DB_PATH):
+        logger.warning(f"DB not found at {DB_PATH}; embeddings cache empty")
+        EMBEDDING_MATRIX = None
+        CHUNK_META = []
+        return
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id, doc_title, original_url, chunk_index, content, embedding
+        FROM markdown_chunks
+        WHERE embedding IS NOT NULL
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+
+    if not rows:
+        logger.warning("No embedded rows found; queries will return no results")
+        EMBEDDING_MATRIX = None
+        CHUNK_META = []
+        return
+
+    vectors = []
+    meta = []
+    for row in rows:
+        try:
+            vec = np.asarray(json.loads(row["embedding"]), dtype=np.float32)
+        except Exception as e:
+            logger.error(f"Skipping row {row['id']}: bad embedding ({e})")
+            continue
+        vectors.append(vec)
+        meta.append({
+            "id": row["id"],
+            "title": row["doc_title"],
+            "url": row["original_url"] or "",
+            "content": row["content"],
+            "chunk_index": row["chunk_index"],
+        })
+
+    matrix = np.vstack(vectors)
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    norms[norms == 0] = 1.0
+    EMBEDDING_MATRIX = (matrix / norms).astype(np.float32)
+    CHUNK_META = meta
+    logger.info(f"Loaded embeddings cache: matrix shape {EMBEDDING_MATRIX.shape}, {len(CHUNK_META)} chunks")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    load_embeddings_cache()
+    yield
+
+
 # Models
 class QueryRequest(BaseModel):
     question: str
@@ -44,7 +109,7 @@ class QueryResponse(BaseModel):
     links: List[LinkInfo]
 
 # Initialize FastAPI app
-app = FastAPI(title="RAG Query API", description="API for querying the RAG knowledge base")
+app = FastAPI(title="RAG Query API", description="API for querying the RAG knowledge base", lifespan=lifespan)
 
 # Add CORS middleware
 app.add_middleware(
@@ -90,32 +155,6 @@ if not os.path.exists(DB_PATH):
     ''')
     conn.commit()
     conn.close()
-
-# Vector similarity calculation with improved handling
-def cosine_similarity(vec1, vec2):
-    try:
-        # Convert to numpy arrays
-        vec1 = np.array(vec1)
-        vec2 = np.array(vec2)
-        
-        # Handle zero vectors
-        if np.all(vec1 == 0) or np.all(vec2 == 0):
-            return 0.0
-            
-        # Calculate cosine similarity
-        dot_product = np.dot(vec1, vec2)
-        norm_vec1 = np.linalg.norm(vec1)
-        norm_vec2 = np.linalg.norm(vec2)
-        
-        # Avoid division by zero
-        if norm_vec1 == 0 or norm_vec2 == 0:
-            return 0.0
-            
-        return dot_product / (norm_vec1 * norm_vec2)
-    except Exception as e:
-        logger.error(f"Error in cosine_similarity: {e}")
-        logger.error(traceback.format_exc())
-        return 0.0  # Return 0 similarity on error rather than crashing
 
 # Function to get embedding from aipipe proxy with retry mechanism
 async def get_embedding(text, max_retries=3):
@@ -165,76 +204,44 @@ async def get_embedding(text, max_retries=3):
                 raise HTTPException(status_code=500, detail=error_msg)
             await asyncio.sleep(3 * retries)  # Wait before retry
 
-# Function to find similar content in the database with improved logic
-async def find_similar_content(query_embedding, conn):
+# Vectorized similarity over the pre-loaded normalized embedding matrix.
+async def find_similar_content(query_embedding):
     try:
-        logger.info("Finding similar content in database")
-        cursor = conn.cursor()
-        results = []
+        if EMBEDDING_MATRIX is None or not CHUNK_META:
+            logger.warning("Embeddings cache empty; returning no results")
+            return []
 
-        # Search markdown chunks
-        logger.info("Querying markdown chunks")
-        cursor.execute("""
-        SELECT id, doc_title, original_url, downloaded_at, chunk_index, content, embedding 
-        FROM markdown_chunks 
-        WHERE embedding IS NOT NULL
-        """)
-        
-        markdown_chunks = cursor.fetchall()
-        logger.info(f"Processing {len(markdown_chunks)} markdown chunks")
-        processed_count = 0
-        
-        for chunk in markdown_chunks:
-            try:
-                embedding = json.loads(chunk["embedding"])
-                similarity = cosine_similarity(query_embedding, embedding)
-                
-                if similarity >= SIMILARITY_THRESHOLD:
-                    results.append({
-                        "id": chunk["id"],
-                        "title": chunk["doc_title"],
-                        "url": chunk["original_url"] or "",
-                        "content": chunk["content"],
-                        "chunk_index": chunk["chunk_index"],
-                        "similarity": float(similarity)
-                    })
-                
-                processed_count += 1
-                if processed_count % 1000 == 0:
-                    logger.info(f"Processed {processed_count}/{len(markdown_chunks)} markdown chunks")
-                    
-            except Exception as e:
-                logger.error(f"Error processing markdown chunk {chunk['id']}: {e}")
-        
-        # Sort by similarity (descending)
+        q = np.asarray(query_embedding, dtype=np.float32)
+        qn = float(np.linalg.norm(q))
+        if qn == 0:
+            return []
+        q = q / qn
+
+        sims = EMBEDDING_MATRIX @ q  # shape (N,)
+        above = np.where(sims >= SIMILARITY_THRESHOLD)[0]
+        logger.info(f"Matrix similarity over {len(CHUNK_META)} chunks: {len(above)} above threshold")
+
+        results = [
+            {**CHUNK_META[i], "similarity": float(sims[i])}
+            for i in above
+        ]
         results.sort(key=lambda x: x["similarity"], reverse=True)
-        logger.info(f"Found {len(results)} relevant results above threshold")
-        
-        # Group by document and keep most relevant chunks
-        grouped_results = {}
-        for result in results:
-            key = result["title"]
-            if key not in grouped_results:
-                grouped_results[key] = []
-            grouped_results[key].append(result)
-        
-        # For each source, keep only the most relevant chunks
-        final_results = []
-        for key, chunks in grouped_results.items():
-            # Sort chunks by similarity
+
+        # Group by document title, keep top MAX_CONTEXT_CHUNKS per doc
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        for r in results:
+            grouped.setdefault(r["title"], []).append(r)
+
+        final_results: List[Dict[str, Any]] = []
+        for chunks in grouped.values():
             chunks.sort(key=lambda x: x["similarity"], reverse=True)
-            # Keep top chunks
             final_results.extend(chunks[:MAX_CONTEXT_CHUNKS])
-        
-        # Sort again by similarity
+
         final_results.sort(key=lambda x: x["similarity"], reverse=True)
-        
-        # Return top results, limited by MAX_RESULTS
         logger.info(f"Returning {len(final_results[:MAX_RESULTS])} final results after grouping")
         return final_results[:MAX_RESULTS]
     except Exception as e:
-        error_msg = f"Error in find_similar_content: {e}"
-        logger.error(error_msg)
+        logger.error(f"Error in find_similar_content: {e}")
         logger.error(traceback.format_exc())
         raise
 
@@ -460,7 +467,7 @@ def parse_llm_response(response):
                 if url_match:
                     # Find the first non-None group from the regex match
                     url = next((g for g in url_match.groups() if g), "")
-                    url = url.strip()
+                    url = url.strip().rstrip(".,;:)]}'\"")
                     
                     # Default text if no match
                     text = "Source reference"
@@ -515,7 +522,7 @@ async def query_knowledge_base(request: QueryRequest):
             
             # Find similar content
             logger.info("Finding similar content")
-            relevant_results = await find_similar_content(query_embedding, conn)
+            relevant_results = await find_similar_content(query_embedding)
             
             if not relevant_results:
                 logger.info("No relevant results found")
